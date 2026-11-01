@@ -1,0 +1,4 @@
+{
+  "//": "Intentionally empty: build.mjs applies the Babel Solid transform itself.",
+  "compilerOptions": {}
+}

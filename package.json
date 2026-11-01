@@ -1,0 +1,59 @@
+{
+  "name": "opencode-k8s-manager",
+  "version": "0.1.0",
+  "description": "OpenCode plugin: manage Kubernetes contexts from kubeconfig files, directories and the env-manager vault",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/craig-dougan-maersk/opencode-k8s-context.git"
+  },
+  "homepage": "https://github.com/craig-dougan-maersk/opencode-k8s-context#readme",
+  "bugs": {
+    "url": "https://github.com/craig-dougan-maersk/opencode-k8s-context/issues"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "kubernetes",
+    "kubeconfig",
+    "kubectl",
+    "context"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./tui": "./tui.js",
+    "./rpc": "./src/rpc.ts"
+  },
+  "files": [
+    "src",
+    "tui.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "compile": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node build-tests.mjs && node --test .test-build/*.test.js"
+  },
+  "dependencies": {
+    "@opencode/plugin": "latest",
+    "yaml": "^2.8.1"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.8.0",
+    "@opentui/solid": ">=0.8.0",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/preset-typescript": "^7.27.1",
+    "@opentui/core": "^0.8.1",
+    "@opentui/solid": "^0.8.1",
+    "@types/node": "^22.0.0",
+    "babel-preset-solid": "^1.9.9",
+    "esbuild": "^0.25.0",
+    "solid-js": "^1.9.0",
+    "typescript": "^5.6.0"
+  }
+}
