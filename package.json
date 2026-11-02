@@ -1,7 +1,7 @@
 {
   "name": "opencode-k8s-manager",
-  "version": "0.1.0",
-  "description": "OpenCode plugin: manage Kubernetes contexts from kubeconfig files, directories and the env-manager vault",
+  "version": "0.2.0",
+  "description": "OpenCode plugin: manage Kubernetes contexts from kubeconfig files, directories and the env-manager secret store",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -18,7 +18,9 @@
     "kubernetes",
     "kubeconfig",
     "kubectl",
-    "context"
+    "context",
+    "secret-store",
+    "local-age"
   ],
   "exports": {
     ".": "./src/index.ts",

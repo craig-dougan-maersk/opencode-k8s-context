@@ -9,33 +9,44 @@ import { expandPath, messageOf } from "./util.js"
 
 const run = promisify(execFile)
 
-export const DEFAULT_PROVIDER = ["age", "--decrypt", "--identity", "{keyFile}", "{store}"]
+/**
+ * Provider ids. `local-age` is the built-in provider: an age-encrypted file on
+ * disk, decrypted with the age CLI. `custom` runs the layer's `provider` argv
+ * template. A future Hashicorp Vault provider would be a third id here.
+ */
+export type SecretProviderType = "local-age" | "custom"
+
+export const LOCAL_AGE: SecretProviderType = "local-age"
+export const CUSTOM_PROVIDER: SecretProviderType = "custom"
+export const LOCAL_AGE_PROVIDER = ["age", "--decrypt", "--identity", "{keyFile}", "{store}"]
 export const DEFAULT_TTL_SECONDS = 60
 export const DEFAULT_TIMEOUT_MS = 15_000
 
 const ENTRY_NAME = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/
 
-export interface VaultLayer {
-  /** argv template; `{store}`, `{keyFile}` and `{cwd}` are substituted. Empty means age. */
+export interface SecretLayer {
+  /** Provider technology: `local-age` (default) or `custom` (explicit argv). */
+  type: SecretProviderType
+  /** argv template; `{store}`, `{keyFile}` and `{cwd}` are substituted. Empty uses age. */
   provider: string[]
   /** Encrypted store file, absolute, home-relative or work-directory relative. */
   store?: string
-  /** Private key / identity file for the default age provider. */
+  /** Private key / identity file for the default local-age provider. */
   keyFile?: string
 }
 
-export interface VaultSource {
-  layers: VaultLayer[]
+export interface SecretStoreSource {
+  layers: SecretLayer[]
   ttlSeconds: number
   warnings: string[]
 }
 
-export interface VaultEntryValue {
+export interface SecretEntryValue {
   value: string
   layer: string
 }
 
-export interface VaultListing {
+export interface SecretListing {
   entries: string[]
   layers: string[]
   warnings: string[]
@@ -48,7 +59,15 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function normalizeLayer(value: unknown): VaultLayer | undefined {
+function resolveType(value: unknown, hasProvider: boolean): SecretProviderType {
+  // An explicit argv provider is always a custom provider. Otherwise a known
+  // `type` is honoured and anything else falls back to the built-in.
+  if (hasProvider) return CUSTOM_PROVIDER
+  if (typeof value === "string" && value.trim() === CUSTOM_PROVIDER) return CUSTOM_PROVIDER
+  return LOCAL_AGE
+}
+
+export function normalizeLayer(value: unknown): SecretLayer | undefined {
   if (!isRecord(value)) return undefined
   const provider = Array.isArray(value.provider)
     ? value.provider
@@ -58,13 +77,13 @@ function normalizeLayer(value: unknown): VaultLayer | undefined {
   const store = typeof value.store === "string" && value.store.trim() ? value.store.trim() : undefined
   const keyFile = typeof value.keyFile === "string" && value.keyFile.trim() ? value.keyFile.trim() : undefined
   if (!store && !provider.length) return undefined
-  return { provider, store, keyFile }
+  return { type: resolveType(value.type, provider.length > 0), provider, store, keyFile }
 }
 
-function normalizeLayers(value: unknown): VaultLayer[] {
+function normalizeLayers(value: unknown): SecretLayer[] {
   if (!isRecord(value)) return []
   if (Array.isArray(value.stores)) {
-    return value.stores.map(normalizeLayer).filter((layer): layer is VaultLayer => Boolean(layer))
+    return value.stores.map(normalizeLayer).filter((layer): layer is SecretLayer => Boolean(layer))
   }
   const single = normalizeLayer(value)
   return single ? [single] : []
@@ -75,18 +94,22 @@ export function globalEnvManagerPath(): string {
   return path.join(base, "opencode", "env-manager.json")
 }
 
-/** Layered vault configuration inherited from env-manager: project first, then global. */
-export async function envManagerLayers(directory: string): Promise<{ layers: VaultLayer[]; warnings: string[] }> {
+/**
+ * Layered secret store configuration inherited from env-manager: project first,
+ * then global. `secretStore` is the current key; `vault` is the pre-rename one.
+ */
+export async function envManagerLayers(directory: string): Promise<{ layers: SecretLayer[]; warnings: string[] }> {
   const warnings: string[] = []
-  const layers: VaultLayer[] = []
+  const layers: SecretLayer[] = []
 
-  const read = async (file: string): Promise<VaultLayer[]> => {
+  const read = async (file: string): Promise<SecretLayer[]> => {
     try {
       const text = await fs.readFile(file, "utf8")
       const parsed = JSON.parse(text.replace(/^\uFEFF/, ""))
-      return normalizeLayers(isRecord(parsed) ? parsed.vault : undefined)
+      if (!isRecord(parsed)) return []
+      return normalizeLayers(parsed.secretStore ?? parsed.vault)
     } catch (error: any) {
-      if (error?.code !== "ENOENT") warnings.push(`Cannot read env-manager vault config ${file}: ${messageOf(error)}`)
+      if (error?.code !== "ENOENT") warnings.push(`Cannot read env-manager secret store config ${file}: ${messageOf(error)}`)
       return []
     }
   }
@@ -96,7 +119,7 @@ export async function envManagerLayers(directory: string): Promise<{ layers: Vau
 
   const seen = new Set<string>()
   const unique = layers.filter((layer) => {
-    const key = `${layer.provider.join("\u0000")}|${layer.store ?? ""}|${layer.keyFile ?? ""}`
+    const key = `${layer.type}\u0000${layer.provider.join("\u0000")}|${layer.store ?? ""}|${layer.keyFile ?? ""}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -105,38 +128,38 @@ export async function envManagerLayers(directory: string): Promise<{ layers: Vau
   return { layers: unique, warnings }
 }
 
-export async function vaultSource(directory: string, config: Config): Promise<VaultSource> {
-  if (config.vault.stores.length) {
-    return { layers: config.vault.stores, ttlSeconds: config.vault.ttlSeconds, warnings: [] }
+export async function secretStoreSource(directory: string, config: Config): Promise<SecretStoreSource> {
+  if (config.secretStore.stores.length) {
+    return { layers: config.secretStore.stores, ttlSeconds: config.secretStore.ttlSeconds, warnings: [] }
   }
-  if (!config.vault.inherit) {
-    return { layers: [], ttlSeconds: config.vault.ttlSeconds, warnings: [] }
+  if (!config.secretStore.inherit) {
+    return { layers: [], ttlSeconds: config.secretStore.ttlSeconds, warnings: [] }
   }
   const inherited = await envManagerLayers(directory)
-  return { layers: inherited.layers, ttlSeconds: config.vault.ttlSeconds, warnings: inherited.warnings }
+  return { layers: inherited.layers, ttlSeconds: config.secretStore.ttlSeconds, warnings: inherited.warnings }
 }
 
-function storeArgument(layer: VaultLayer, directory: string): string {
+function storeArgument(layer: SecretLayer, directory: string): string {
   const store = layer.store ?? ""
   if (!layer.provider.length) return expandPath(store, directory)
   if (store.startsWith("~") || store.startsWith("$HOME/") || path.isAbsolute(store)) return expandPath(store, directory)
   return store
 }
 
-export function layerArgv(layer: VaultLayer, directory: string): string[] {
-  if (!layer.store && !layer.provider.length) throw new Error("Vault layer has neither a store nor a provider")
+export function layerArgv(layer: SecretLayer, directory: string): string[] {
+  if (!layer.store && !layer.provider.length) throw new Error("Secret store layer has neither a store nor a provider")
   const store = storeArgument(layer, directory)
   const keyFile = layer.keyFile ? expandPath(layer.keyFile, directory) : undefined
-  const template = layer.provider.length ? layer.provider : DEFAULT_PROVIDER
+  const template = layer.provider.length ? layer.provider : LOCAL_AGE_PROVIDER
   if (!layer.provider.length && !keyFile) {
-    throw new Error("The default age provider needs keyFile on the layer, or an explicit provider")
+    throw new Error("The local-age provider needs keyFile on the layer, or an explicit provider")
   }
   return template.map((token) =>
     token.replaceAll("{store}", store).replaceAll("{keyFile}", keyFile ?? "").replaceAll("{cwd}", directory),
   )
 }
 
-export function describeLayer(layer: VaultLayer, directory: string): string {
+export function describeLayer(layer: SecretLayer, directory: string): string {
   if (layer.provider.length) {
     try {
       return layerArgv(layer, directory).join(" ")
@@ -144,7 +167,7 @@ export function describeLayer(layer: VaultLayer, directory: string): string {
       return layer.provider.join(" ")
     }
   }
-  return storeArgument(layer, directory) || DEFAULT_PROVIDER.join(" ")
+  return storeArgument(layer, directory) || LOCAL_AGE_PROVIDER.join(" ")
 }
 
 export function isValidEntryName(name: string): boolean {
@@ -152,8 +175,8 @@ export function isValidEntryName(name: string): boolean {
 }
 
 /**
- * Parse a decrypted vault file. Values are taken literally: `$VAR` is never
- * expanded, because credentials routinely contain `$` and backslashes.
+ * Parse a decrypted secret store file. Values are taken literally: `$VAR` is
+ * never expanded, because credentials routinely contain `$` and backslashes.
  */
 export function parseSecretFile(text: string): { values: Record<string, string>; warnings: string[] } {
   const values: Record<string, string> = {}
@@ -212,19 +235,19 @@ interface Decrypted {
   warnings: string[]
 }
 
-export class Vault {
+export class SecretStore {
   private readonly cache = new Map<string, Decrypted>()
 
   constructor(
     private readonly directory: string,
-    private readonly load: () => Promise<VaultSource>,
+    private readonly load: () => Promise<SecretStoreSource>,
   ) {}
 
   invalidate(): void {
     this.cache.clear()
   }
 
-  private async decryptLayer(layer: VaultLayer, ttl: number, force = false): Promise<Decrypted> {
+  private async decryptLayer(layer: SecretLayer, ttl: number, force = false): Promise<Decrypted> {
     const key = describeLayer(layer, this.directory)
     const cached = this.cache.get(key)
     if (!force && ttl > 0 && cached && Date.now() - cached.at < ttl) return cached
@@ -252,8 +275,8 @@ export class Vault {
     return entry
   }
 
-  /** Resolve one vault entry across the layered stores. Values stay in memory. */
-  async entry(name: string): Promise<VaultEntryValue | undefined> {
+  /** Resolve one secret store entry across the layered stores. Values stay in memory. */
+  async entry(name: string): Promise<SecretEntryValue | undefined> {
     const source = await this.load()
     for (const layer of source.layers) {
       let decrypted: Decrypted
@@ -268,9 +291,9 @@ export class Vault {
     return undefined
   }
 
-  async list(): Promise<VaultListing> {
+  async list(): Promise<SecretListing> {
     const source = await this.load()
-    const listing: VaultListing = { entries: [], layers: [], warnings: [...source.warnings], errors: [] }
+    const listing: SecretListing = { entries: [], layers: [], warnings: [...source.warnings], errors: [] }
     const merged = new Set<string>()
 
     for (const layer of source.layers) {
@@ -303,11 +326,11 @@ export function childEnvironment(): Record<string, string> {
 
 function runErrorMessage(file: string, error: any): string {
   if (error?.code === "ENOENT") {
-    return `Vault command not found: ${file}. Install it (for age: sudo apt install age) or set the layer provider.`
+    return `Secret store command not found: ${file}. Install it (for local-age: sudo apt install age) or set the layer provider.`
   }
   if (error?.killed || error?.signal === "SIGTERM") {
-    return `Vault command timed out after ${DEFAULT_TIMEOUT_MS / 1000}s: ${file}`
+    return `Secret store command timed out after ${DEFAULT_TIMEOUT_MS / 1000}s: ${file}`
   }
   const stderr = typeof error?.stderr === "string" ? error.stderr.trim() : ""
-  return `Vault command failed (${file}): ${stderr || messageOf(error)}`
+  return `Secret store command failed (${file}): ${stderr || messageOf(error)}`
 }

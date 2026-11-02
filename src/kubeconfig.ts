@@ -15,10 +15,10 @@ export interface ParsedKubeconfig {
   error?: string
 }
 
-export type SourceKind = "file" | "dir" | "vault"
+export type SourceKind = "file" | "dir" | "secret-store"
 
 export interface DiscoveredSource {
-  /** Selection identity: the config id for file/vault, `dir:<configId>:<file>` for dir entries. */
+  /** Selection identity: the config id for file/secret-store, `dir:<configId>:<file>` for dir entries. */
   id: string
   label: string
   kind: SourceKind
@@ -26,7 +26,7 @@ export interface DiscoveredSource {
   configId: string
   /** Absolute path of the kubeconfig file, when it lives on disk. */
   path?: string
-  /** Vault entry name, for vault sources. */
+  /** Secret store entry name, for secret-store sources. */
   entry?: string
   /** File name inside a directory source. */
   fileName?: string
@@ -116,24 +116,24 @@ export function shortContext(context: string, limit = 28): string {
 }
 
 /**
- * A vault entry holds either raw kubeconfig YAML or its base64 encoding.
- * Base64 is the documented form because the vault stores one `NAME=value` line
+ * A secret store entry holds either raw kubeconfig YAML or its base64 encoding.
+ * Base64 is the documented form because the store holds one `NAME=value` line
  * per entry.
  */
 export function decodeKubeconfigValue(value: string, entry: string): string {
   const trimmed = value.trim()
-  if (!trimmed) throw new Error(`Vault entry ${entry} is empty`)
+  if (!trimmed) throw new Error(`Secret store entry ${entry} is empty`)
 
   if (/^(apiVersion|clusters|contexts|kind|users)\s*:/m.test(trimmed)) return trimmed
 
   const payload = trimmed.startsWith("base64:") ? trimmed.slice(7).replace(/\s+/g, "") : trimmed.replace(/\s+/g, "")
   if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(payload)) {
-    throw new Error(`Vault entry ${entry} is neither kubeconfig YAML nor base64`)
+    throw new Error(`Secret store entry ${entry} is neither kubeconfig YAML nor base64`)
   }
 
   const decoded = Buffer.from(payload, "base64").toString("utf8")
   if (/^(apiVersion|clusters|contexts|kind|users)\s*:/m.test(decoded)) return decoded
-  throw new Error(`Vault entry ${entry} does not decode to a kubeconfig`)
+  throw new Error(`Secret store entry ${entry} does not decode to a kubeconfig`)
 }
 
 export interface SourceView {

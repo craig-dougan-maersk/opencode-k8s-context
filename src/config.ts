@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { expandPath, messageOf } from "./util.js"
-import type { VaultLayer } from "./vault.js"
+import { normalizeLayer, type SecretLayer } from "./secret-store.js"
 
 export { expandPath, messageOf }
 
@@ -14,12 +14,12 @@ export const SOURCE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/
 export interface SourceConfig {
   /** Stable identifier used by selections, profile links and storage. */
   id: string
-  kind: "file" | "dir" | "vault"
+  kind: "file" | "dir" | "secret-store"
   /** Human name shown in the status bar and menus. */
   label?: string
   /** File or directory path for `file` and `dir` sources. */
   path?: string
-  /** Vault entry name for `vault` sources. */
+  /** Secret store entry name for `secret-store` sources. */
   entry?: string
 }
 
@@ -28,10 +28,10 @@ export interface Config {
   sources: SourceConfig[]
   defaultEnabled: string[]
   profileLinks: Record<string, string[]>
-  vault: {
+  secretStore: {
     /** Read layers from env-manager's config when no explicit stores are set. */
     inherit: boolean
-    stores: VaultLayer[]
+    stores: SecretLayer[]
     ttlSeconds: number
   }
 }
@@ -52,7 +52,7 @@ export function defaultConfig(): Config {
     ],
     defaultEnabled: ["default"],
     profileLinks: {},
-    vault: { inherit: true, stores: [], ttlSeconds: 60 },
+    secretStore: { inherit: true, stores: [], ttlSeconds: 60 },
   }
 }
 
@@ -82,13 +82,15 @@ function strings(value: unknown): string[] {
 function normalizeSource(value: unknown, warnings: string[]): SourceConfig | undefined {
   if (!isRecord(value)) return undefined
   const id = typeof value.id === "string" ? value.id.trim() : ""
-  const kind = value.kind
+  // `secret-store` is current; `vault` is the pre-rename value, accepted and
+  // normalised so an existing config keeps working.
+  const kind = value.kind === "vault" ? "secret-store" : value.kind
   if (!id || !isSourceId(id)) {
     warnings.push(`Ignoring source with an invalid id: ${JSON.stringify(value.id)}`)
     return undefined
   }
-  if (kind !== "file" && kind !== "dir" && kind !== "vault") {
-    warnings.push(`Ignoring source "${id}": kind must be file, dir or vault`)
+  if (kind !== "file" && kind !== "dir" && kind !== "secret-store") {
+    warnings.push(`Ignoring source "${id}": kind must be file, dir or secret-store`)
     return undefined
   }
   const source: SourceConfig = { id, kind }
@@ -96,29 +98,24 @@ function normalizeSource(value: unknown, warnings: string[]): SourceConfig | und
   if (typeof value.path === "string" && value.path.trim()) source.path = value.path.trim()
   if (typeof value.entry === "string" && value.entry.trim()) source.entry = value.entry.trim()
 
-  if (kind === "vault" && !source.entry) {
-    warnings.push(`Ignoring source "${id}": vault sources need an entry`)
+  if (kind === "secret-store" && !source.entry) {
+    warnings.push(`Ignoring source "${id}": secret-store sources need an entry`)
     return undefined
   }
-  if (kind !== "vault" && !source.path) {
+  if (kind !== "secret-store" && !source.path) {
     warnings.push(`Ignoring source "${id}": ${kind} sources need a path`)
     return undefined
   }
   return source
 }
 
-function normalizeVault(value: unknown): Config["vault"] {
+function normalizeSecretStore(value: unknown): Config["secretStore"] {
   if (!isRecord(value)) return { inherit: true, stores: [], ttlSeconds: 60 }
-  const stores: VaultLayer[] = []
+  const stores: SecretLayer[] = []
   if (Array.isArray(value.stores)) {
     for (const item of value.stores) {
-      if (!isRecord(item)) continue
-      const layer: VaultLayer = {
-        provider: strings(item.provider),
-      }
-      if (typeof item.store === "string" && item.store.trim()) layer.store = item.store.trim()
-      if (typeof item.keyFile === "string" && item.keyFile.trim()) layer.keyFile = item.keyFile.trim()
-      if (layer.store || layer.provider.length) stores.push(layer)
+      const layer = normalizeLayer(item)
+      if (layer) stores.push(layer)
     }
   }
   const ttlSeconds =
@@ -137,7 +134,8 @@ export function normalizeConfig(value: unknown, warnings: string[] = []): Config
     sources: [],
     defaultEnabled: [],
     profileLinks: {},
-    vault: normalizeVault(value.vault),
+    // `secretStore` is current; `vault` is the pre-rename key.
+    secretStore: normalizeSecretStore(value.secretStore ?? value.vault),
   }
 
   if (Array.isArray(value.sources)) {
@@ -172,10 +170,10 @@ function mergeConfigs(global: Config, project: Config | undefined): Config {
     sources: [...sources.values()],
     defaultEnabled: project?.defaultEnabled.length ? project.defaultEnabled : global.defaultEnabled,
     profileLinks: { ...global.profileLinks, ...(project?.profileLinks ?? {}) },
-    vault: {
-      inherit: (project?.vault.inherit ?? true) && global.vault.inherit,
-      stores: project?.vault.stores.length ? project.vault.stores : global.vault.stores,
-      ttlSeconds: project?.vault.ttlSeconds ?? global.vault.ttlSeconds,
+    secretStore: {
+      inherit: (project?.secretStore.inherit ?? true) && global.secretStore.inherit,
+      stores: project?.secretStore.stores.length ? project.secretStore.stores : global.secretStore.stores,
+      ttlSeconds: project?.secretStore.ttlSeconds ?? global.secretStore.ttlSeconds,
     },
   }
 }
@@ -237,7 +235,7 @@ export async function saveConfig(directory: string, config: Config): Promise<voi
 
 export function sourceLabel(source: SourceConfig): string {
   if (source.label) return source.label
-  if (source.kind === "vault") return source.entry ?? source.id
+  if (source.kind === "secret-store") return source.entry ?? source.id
   if (source.path) return path.basename(source.path) || source.path
   return source.id
 }

@@ -38,7 +38,7 @@ import {
   stateDirectory,
   writePrivateFile,
 } from "./util.js"
-import { Vault, vaultSource, type VaultListing } from "./vault.js"
+import { SecretStore, secretStoreSource, type SecretListing } from "./secret-store.js"
 
 const run = promisify(execFile)
 const DISCOVERY_TTL_MS = 5_000
@@ -81,7 +81,7 @@ interface StateView {
   defaultEnabled: string[]
   profileLinks: Record<string, string[]>
   warnings: string[]
-  vault: { configured: boolean; layers: number; warnings: string[] }
+  secretStore: { configured: boolean; layers: number; warnings: string[] }
 }
 
 interface BuildOptions {
@@ -95,7 +95,7 @@ export default Plugin.define({
     const directory = ctx.location.directory
     const stateDir = stateDirectory()
     const selectorDir = path.join(stateDir, "sessions")
-    const vaultDir = path.join(stateDir, "vault")
+    const secretStoreDir = path.join(stateDir, "secret-store")
 
     const live = new Map<string, Runtime>()
     const written = new Map<string, string>()
@@ -113,9 +113,9 @@ export default Plugin.define({
       return run
     }
 
-    const vault = new Vault(directory, async () => {
+    const secretStore = new SecretStore(directory, async () => {
       const loaded = await loadConfig(directory)
-      return vaultSource(directory, loaded.config)
+      return secretStoreSource(directory, loaded.config)
     })
 
     function storageKey(sessionID: string): string {
@@ -290,18 +290,18 @@ export default Plugin.define({
           continue
         }
 
-        // Vault-backed kubeconfig.
+        // Secret-store-backed kubeconfig.
         const entry = source.entry ?? ""
         let text: string | undefined
         try {
-          const found = await vault.entry(entry)
-          if (!found) throw new Error(`Vault entry not found: ${entry}`)
+          const found = await secretStore.entry(entry)
+          if (!found) throw new Error(`Secret store entry not found: ${entry}`)
           text = decodeKubeconfigValue(found.value, entry)
         } catch (error) {
           sources.push({
             id: source.id,
             label: sourceLabel(source),
-            kind: "vault",
+            kind: "secret-store",
             configId: source.id,
             entry,
             available: false,
@@ -313,7 +313,7 @@ export default Plugin.define({
         }
 
         const hash = crypto.createHash("sha1").update(`${entry}\u0000${text}`).digest("hex").slice(0, 16)
-        const file = path.join(vaultDir, `${safeName(entry)}-${hash}.yaml`)
+        const file = path.join(secretStoreDir, `${safeName(entry)}-${hash}.yaml`)
         try {
           if (!(await isFile(file))) await writePrivateFile(file, text)
         } catch (error) {
@@ -324,7 +324,7 @@ export default Plugin.define({
         sources.push({
           id: source.id,
           label: sourceLabel(source),
-          kind: "vault",
+          kind: "secret-store",
           configId: source.id,
           path: file,
           entry,
@@ -338,13 +338,17 @@ export default Plugin.define({
 
       // Remove decrypted copies that no longer belong to a configured source.
       try {
-        for (const name of await fs.readdir(vaultDir)) {
-          const file = path.join(vaultDir, name)
+        for (const name of await fs.readdir(secretStoreDir)) {
+          const file = path.join(secretStoreDir, name)
           if (!files.has(file)) await fs.rm(file, { force: true })
         }
       } catch {
         // The directory may not exist yet.
       }
+
+      // Pre-rename builds wrote decrypted kubeconfigs under a `vault` directory.
+      // Remove it so no decrypted copy is left behind.
+      await fs.rm(path.join(stateDir, "vault"), { recursive: true, force: true }).catch(() => undefined)
 
       discovery = { at: Date.now(), sources, warnings, files }
       return discovery
@@ -414,7 +418,7 @@ export default Plugin.define({
         group: source.group,
       }))
 
-      const vaultInfo = await vaultSource(directory, config)
+      const secretStoreInfo = await secretStoreSource(directory, config)
 
       const state: StateView = {
         directory,
@@ -437,10 +441,10 @@ export default Plugin.define({
         defaultEnabled: config.defaultEnabled,
         profileLinks: config.profileLinks,
         warnings,
-        vault: {
-          configured: vaultInfo.layers.length > 0,
-          layers: vaultInfo.layers.length,
-          warnings: vaultInfo.warnings,
+        secretStore: {
+          configured: secretStoreInfo.layers.length > 0,
+          layers: secretStoreInfo.layers.length,
+          warnings: secretStoreInfo.warnings,
         },
       }
 
@@ -471,7 +475,7 @@ export default Plugin.define({
       await change(next)
       await saveConfig(directory, next)
       discovery = undefined
-      vault.invalidate()
+      secretStore.invalidate()
     }
 
     // ---- command delivery --------------------------------------------------
@@ -695,11 +699,11 @@ export default Plugin.define({
       },
       refresh: async () => {
         discovery = undefined
-        vault.invalidate()
+        secretStore.invalidate()
         written.clear()
         return buildState(undefined, { refresh: true })
       },
-      vaultEntries: async (): Promise<VaultListing> => vault.list(),
+      secretStoreEntries: async (): Promise<SecretListing> => secretStore.list(),
       test: async (input: unknown) => {
         const value = input as { sessionID?: string }
         const state = await buildState(value.sessionID)
@@ -752,7 +756,7 @@ export default Plugin.define({
         if (!raw) throw new Error(`${value.kind} sources need a path`)
         const absolute = expandPath(raw, directory)
         const duplicate = loaded.config.sources.find(
-          (source) => source.kind !== "vault" && source.path && expandPath(source.path, directory) === absolute,
+          (source) => source.kind !== "secret-store" && source.path && expandPath(source.path, directory) === absolute,
         )
         if (duplicate) throw new Error(`Already configured as "${duplicate.label ?? duplicate.id}"`)
         if (value.kind === "file") {
@@ -772,17 +776,17 @@ export default Plugin.define({
       }
 
       const entry = (value.entry ?? "").trim()
-      if (!entry) throw new Error("Vault sources need an entry")
-      const duplicate = loaded.config.sources.find((source) => source.kind === "vault" && source.entry === entry)
+      if (!entry) throw new Error("Secret store sources need an entry")
+      const duplicate = loaded.config.sources.find((source) => source.kind === "secret-store" && source.entry === entry)
       if (duplicate) throw new Error(`Already configured as "${duplicate.label ?? duplicate.id}"`)
-      const found = await vault.entry(entry)
-      if (!found) throw new Error(`Vault entry not found: ${entry}`)
+      const found = await secretStore.entry(entry)
+      if (!found) throw new Error(`Secret store entry not found: ${entry}`)
       const text = decodeKubeconfigValue(found.value, entry)
       const parsed = parseKubeconfig(text, entry)
       if (!parsed.valid) throw new Error(parsed.error ?? `${entry} is not a kubeconfig`)
       return {
         id: uniqueId(value.label?.trim() || entry.replace(/^.*\//, "")),
-        kind: "vault",
+        kind: "secret-store",
         entry,
         label: value.label?.trim() || entry,
       }
