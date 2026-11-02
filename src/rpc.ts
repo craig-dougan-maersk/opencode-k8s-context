@@ -74,7 +74,7 @@ export const K8s = Rpc.define({
         type: "object",
         properties: {
           sessionID: string,
-          kind: { type: "string", enum: ["file", "dir", "vault"] },
+          kind: { type: "string", enum: ["file", "dir", "secret-store", "vault"] },
           path: string,
           entry: string,
           label: string,
@@ -107,7 +107,7 @@ export const K8s = Rpc.define({
       input: { type: "object", properties: {}, additionalProperties: false },
       output: result,
     },
-    vaultEntries: {
+    secretStoreEntries: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: result,
     },

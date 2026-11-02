@@ -24,7 +24,7 @@ await build({
   entryPoints: [
     path.join(root, "test/kubeconfig.test.ts"),
     path.join(root, "test/config.test.ts"),
-    path.join(root, "test/vault.test.ts"),
+    path.join(root, "test/secret-store.test.ts"),
   ],
   outdir: path.join(root, ".test-build"),
   bundle: true,

@@ -137,7 +137,7 @@ test("KUBECONFIG is a colon-separated list", () => {
   assert.equal(kubeconfigValue(["/a/selector.yaml", "/b/config"]), "/a/selector.yaml:/b/config")
 })
 
-test("vault values decode from base64, base64: and raw YAML", () => {
+test("secret store values decode from base64, base64: and raw YAML", () => {
   const encoded = Buffer.from(ALPHA, "utf8").toString("base64")
   assert.equal(decodeKubeconfigValue(encoded, "k8s/prod"), ALPHA)
   assert.equal(decodeKubeconfigValue(`base64:${encoded}`, "k8s/prod"), ALPHA)

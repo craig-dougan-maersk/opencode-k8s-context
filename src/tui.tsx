@@ -7,7 +7,7 @@ import { K8sRpc } from "./rpc.js"
 type SourceView = {
   id: string
   label: string
-  kind: "file" | "dir" | "vault"
+  kind: "file" | "dir" | "secret-store"
   configId: string
   path?: string
   entry?: string
@@ -47,7 +47,7 @@ type State = {
   defaultEnabled: string[]
   profileLinks: Record<string, string[]>
   warnings: string[]
-  vault: { configured: boolean; layers: number; warnings: string[] }
+  secretStore: { configured: boolean; layers: number; warnings: string[] }
 }
 
 // env-manager exposes `activeProfile`; the contract is declared locally so this
@@ -360,12 +360,12 @@ export default Plugin.define({
           value: source.id,
           description: [
             `${source.contexts.length} context${source.contexts.length === 1 ? "" : "s"}`,
-            source.kind === "vault" ? "vault" : source.kind === "dir" ? "directory" : "file",
+            source.kind === "secret-store" ? "secret store" : source.kind === "dir" ? "directory" : "file",
             source.error,
           ]
             .filter(Boolean)
             .join(" · "),
-          category: source.available ? (source.kind === "vault" ? "Vault" : source.kind === "dir" ? "Directory" : "File") : "Unavailable",
+          category: source.available ? (source.kind === "secret-store" ? "Secret store" : source.kind === "dir" ? "Directory" : "File") : "Unavailable",
           disabled: !source.available && !source.group,
         }))
         if (!options.length) {
@@ -399,7 +399,7 @@ export default Plugin.define({
           { title: "Default ~/.kube/config", value: "default" },
           { title: "Kubeconfig file…", value: "file" },
           { title: "Kubeconfig directory…", value: "dir" },
-          { title: "From the env-manager vault…", value: "vault" },
+          { title: "From the env-manager secret store…", value: "secret-store" },
         ],
       })
       if (!kind) return
@@ -422,20 +422,20 @@ export default Plugin.define({
         return
       }
 
-      const listing: any = await rpc.vaultEntries({})
+      const listing: any = await rpc.secretStoreEntries({})
       const entries: string[] = listing?.entries ?? []
       if (!entries.length) {
         await context.ui.dialog.alert({
-          title: "No vault entries",
+          title: "No secret store entries",
           message:
             (listing?.errors?.length ? `${listing.errors.join("\n")}\n\n` : "") +
-            "The env-manager vault is not configured or could not be decrypted. Check ~/.config/opencode/env-manager.json.",
+            "The env-manager secret store is not configured or could not be decrypted. Check ~/.config/opencode/env-manager.json.",
         })
         return
       }
 
       const entry = await context.ui.dialog.select({
-        title: "Vault kubeconfig entry",
+        title: "Secret store kubeconfig entry",
         placeholder: "Search entries",
         options: entries.map((name) => ({
           title: name,
@@ -444,8 +444,8 @@ export default Plugin.define({
         })),
       })
       if (!entry) return
-      await rpc.addSource({ sessionID, kind: "vault", entry })
-      toast(`Added vault entry ${entry}`, "success")
+      await rpc.addSource({ sessionID, kind: "secret-store", entry })
+      toast(`Added secret store entry ${entry}`, "success")
     }
 
     async function removeSource(sessionID: string | undefined, state: State): Promise<void> {
@@ -501,7 +501,7 @@ export default Plugin.define({
     function stateColor(ctx: any, state: State | undefined): any {
       if (!state?.context) return ctx.theme.text.muted
       const source = state.sources.find((item) => item.id === state.contextSource)
-      if (source?.kind === "vault") return ctx.theme.text.warning
+      if (source?.kind === "secret-store") return ctx.theme.text.warning
       if (source?.kind === "dir") return ctx.theme.text.info ?? ctx.theme.text.base
       return ctx.theme.text.success
     }

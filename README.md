@@ -7,15 +7,15 @@ It shows the active context in the status bar and sidebar, switches contexts,
 and lets you choose which kubeconfig sources are enabled per session. Sources
 can come from a kubeconfig file, a directory of kubeconfig files, or entries in
 the [env-manager](https://github.com/craig-dougan-maersk/opencode-env-manager)
-age vault. Sources can be linked to env-manager profiles so the right clusters
-are enabled automatically.
+secret store. Sources can be linked to env-manager profiles so the right
+clusters are enabled automatically.
 
 ## Features
 
 - Status bar indicator: `⎈ <context> · <source>`, colour-coded by source kind.
 - Collapsible **Kubernetes** section in the sidebar.
 - `/k8s` menu for switching context and enabling/disabling sources.
-- File, directory and vault sources, with per-file toggling inside directories.
+- File, directory and secret-store sources, with per-file toggling inside directories.
 - Contexts and sources are per session; other sessions keep their own selection.
 - Never writes `~/.kube/config` and never copies credentials unnecessarily.
 - Read-only `k8s_contexts` tool so the agent knows which cluster it is using.
@@ -49,7 +49,7 @@ Installs resolve the package `exports` map and use the prebuilt `tui.js`; see
 [Development](#development) when changing the TUI.
 
 Requirements: `kubectl` for the optional “Test with kubectl” action, and `age`
-only when using vault sources.
+only when using secret-store sources.
 
 ## Quick start
 
@@ -76,11 +76,11 @@ needed.
   "sources": [
     { "id": "default", "kind": "file", "path": "~/.kube/config", "label": "default" },
     { "id": "configs", "kind": "dir", "path": "~/.kube/configs", "label": "kubeconfigs" },
-    { "id": "prod", "kind": "vault", "entry": "k8s/prod", "label": "prod" }
+    { "id": "prod", "kind": "secret-store", "entry": "k8s/prod", "label": "prod" }
   ],
   "defaultEnabled": ["default"],
   "profileLinks": {},
-  "vault": { "inherit": true }
+  "secretStore": { "inherit": true }
 }
 ```
 
@@ -91,17 +91,20 @@ needed.
   Toggling a directory source enables all of its files. Disabled files stay
   discovered but are not part of `KUBECONFIG`. A missing or empty directory is
   shown as unavailable rather than failing the plugin.
-- `vault` — an entry in the env-manager vault. The entry must hold either raw
-  kubeconfig YAML or its base64 encoding (recommended, because the vault stores
-  one `NAME=value` line per entry):
+- `secret-store` — an entry in the env-manager secret store. The entry must
+  hold either raw kubeconfig YAML or its base64 encoding (recommended, because
+  the store holds one `NAME=value` line per entry):
 
   ```bash
   base64 -w0 ~/.kube/prod.yaml     # paste the output after k8s_prod=
   ```
 
-  With `vault.inherit: true` (the default) the plugin reuses the layers from
-  `~/.config/opencode/env-manager.json` and the project's
-  `.opencode/env-profiles.json`. Set `vault.stores` to override them.
+  With `secretStore.inherit: true` (the default) the plugin reuses the layers
+  from `~/.config/opencode/env-manager.json` and the project's
+  `.opencode/env-profiles.json`. Set `secretStore.stores` to override them.
+
+  The pre-rename `"kind": "vault"` and `"vault": {…}` config key are still
+  accepted; the next save writes them as `secret-store` and `secretStore`.
 
 ## Profile links
 
@@ -146,9 +149,9 @@ KUBECONFIG=<selector>:<enabled kubeconfig paths…>
 
 Client-go's merge rules make the first file's `current-context` win, so the
 source kubeconfigs are never modified and their credentials are never copied.
-Vault sources are the exception: they are decrypted to a `0600` file under
-`~/.local/state/opencode/k8s/vault/`, deleted when the source stops being
-configured.
+Secret-store sources are the exception: they are decrypted to a `0600` file
+under `~/.local/state/opencode/k8s/secret-store/`, deleted when the source stops
+being configured.
 
 `KUBECONFIG` is injected through `shell.create.before`, which means it applies
 to the command OpenCode is about to run, per session. The same value is applied
@@ -170,7 +173,7 @@ The menu can:
 
 - switch cluster context, grouped by source and searchable
 - enable/disable kubeconfigs with ✓ marks
-- add file, directory or vault sources
+- add file, directory or secret-store sources
 - remove configured sources
 - show the effective `KUBECONFIG` and check it with
   `kubectl config current-context`
@@ -179,13 +182,13 @@ The menu can:
 ## Security
 
 - Never writes `~/.kube/config`.
-- Selector stubs contain no credentials; vault kubeconfigs are written with
-  `0600` in a `0700` directory and removed when unused.
+- Selector stubs contain no credentials; secret-store kubeconfigs are written
+  with `0600` in a `0700` directory and removed when unused.
 - Kubeconfig contents are parsed for context, cluster and user names only; keys,
   tokens and certificate data are never logged, returned by RPC or rendered.
-- The vault is decrypted only when a vault source is read (on discovery or an
-  explicit refresh) or when you add one.
-- The server never returns decrypted vault values over RPC. The TUI receives
+- The secret store is decrypted only when a secret-store source is read (on
+  discovery or an explicit refresh) or when you add one.
+- The server never returns decrypted secret-store values over RPC. The TUI receives
   only entry names; the kubeconfig text stays on the server.
 
 ## Limitations
@@ -228,7 +231,7 @@ Layout:
 src/index.ts       server: discovery, state, RPC, shell hook
 src/config.ts      project/global config loading and merging
 src/kubeconfig.ts   YAML parsing, merge view, selector stubs, base64 decoding
-src/vault.ts        env-manager-compatible age vault reader
+src/secret-store.ts env-manager-compatible age secret store reader (local-age)
 src/rpc.ts          typed RPC contract (also exported as ./rpc)
 src/tui.tsx         status bar, sidebar, /k8s menu
 tui.js              prebuilt TUI bundle

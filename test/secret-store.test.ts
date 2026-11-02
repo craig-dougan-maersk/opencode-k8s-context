@@ -6,7 +6,7 @@ import path from "node:path"
 import test from "node:test"
 
 import { decodeKubeconfigValue } from "../src/kubeconfig.js"
-import { Vault, parseSecretFile } from "../src/vault.js"
+import { SecretStore, parseSecretFile } from "../src/secret-store.js"
 
 const hasAge = (() => {
   try {
@@ -20,15 +20,15 @@ const hasAge = (() => {
 
 const KUBECONFIG = `apiVersion: v1
 kind: Config
-current-context: vault-test
+current-context: secret-store-test
 contexts:
-  - name: vault-test
+  - name: secret-store-test
     context:
-      cluster: vault-test
-      user: vault-test
+      cluster: secret-store-test
+      user: secret-store-test
 `
 
-test("parses quoted, escaped and literal vault values", () => {
+test("parses quoted, escaped and literal secret store values", () => {
   const parsed = parseSecretFile(
     [
       "# comment",
@@ -47,7 +47,7 @@ test("parses quoted, escaped and literal vault values", () => {
 })
 
 test("decrypts a layered age store and resolves one entry", { skip: !hasAge }, async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "k8s-vault-"))
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "k8s-secret-store-"))
   try {
     const keyFile = path.join(directory, "keys.txt")
     execFileSync("age-keygen", ["-o", keyFile], { stdio: "ignore" })
@@ -64,18 +64,18 @@ test("decrypts a layered age store and resolves one entry", { skip: !hasAge }, a
     const store = path.join(directory, "secrets.age")
     execFileSync("age", ["-e", "-r", recipient, "-o", store, plain])
 
-    const vault = new Vault(directory, async () => ({
-      layers: [{ provider: [], store, keyFile }],
+    const store_ = new SecretStore(directory, async () => ({
+      layers: [{ type: "local-age", provider: [], store, keyFile }],
       ttlSeconds: 0,
       warnings: [],
     }))
 
-    const entry = await vault.entry("K8S_TEST")
+    const entry = await store_.entry("K8S_TEST")
     assert.ok(entry)
     assert.equal(decodeKubeconfigValue(entry!.value, "K8S_TEST").trimEnd(), KUBECONFIG.trimEnd())
-    assert.equal(await vault.entry("MISSING"), undefined)
+    assert.equal(await store_.entry("MISSING"), undefined)
 
-    const listing = await vault.list()
+    const listing = await store_.list()
     assert.deepEqual(listing.entries, ["K8S_TEST", "OTHER"])
     assert.deepEqual(listing.errors, [])
   } finally {

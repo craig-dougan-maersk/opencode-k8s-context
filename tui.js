@@ -84,7 +84,7 @@ var K8s = Rpc.define({
         type: "object",
         properties: {
           sessionID: string,
-          kind: { type: "string", enum: ["file", "dir", "vault"] },
+          kind: { type: "string", enum: ["file", "dir", "secret-store", "vault"] },
           path: string,
           entry: string,
           label: string
@@ -117,7 +117,7 @@ var K8s = Rpc.define({
       input: { type: "object", properties: {}, additionalProperties: false },
       output: result
     },
-    vaultEntries: {
+    secretStoreEntries: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: result
     },
@@ -433,8 +433,8 @@ ${result2.stderr}` : ""}`
         const options = state.sources.map((source2) => ({
           title: `${source2.enabled ? "\u2713" : "  "} ${source2.label}`,
           value: source2.id,
-          description: [`${source2.contexts.length} context${source2.contexts.length === 1 ? "" : "s"}`, source2.kind === "vault" ? "vault" : source2.kind === "dir" ? "directory" : "file", source2.error].filter(Boolean).join(" \xB7 "),
-          category: source2.available ? source2.kind === "vault" ? "Vault" : source2.kind === "dir" ? "Directory" : "File" : "Unavailable",
+          description: [`${source2.contexts.length} context${source2.contexts.length === 1 ? "" : "s"}`, source2.kind === "secret-store" ? "secret store" : source2.kind === "dir" ? "directory" : "file", source2.error].filter(Boolean).join(" \xB7 "),
+          category: source2.available ? source2.kind === "secret-store" ? "Secret store" : source2.kind === "dir" ? "Directory" : "File" : "Unavailable",
           disabled: !source2.available && !source2.group
         }));
         if (!options.length) {
@@ -480,8 +480,8 @@ ${result2.stderr}` : ""}`
           title: "Kubeconfig directory\u2026",
           value: "dir"
         }, {
-          title: "From the env-manager vault\u2026",
-          value: "vault"
+          title: "From the env-manager secret store\u2026",
+          value: "secret-store"
         }]
       });
       if (!kind) return;
@@ -510,19 +510,19 @@ ${result2.stderr}` : ""}`
         toast(`Added ${value.trim()}`, "success");
         return;
       }
-      const listing = await rpc.vaultEntries({});
+      const listing = await rpc.secretStoreEntries({});
       const entries = listing?.entries ?? [];
       if (!entries.length) {
         await context.ui.dialog.alert({
-          title: "No vault entries",
+          title: "No secret store entries",
           message: (listing?.errors?.length ? `${listing.errors.join("\n")}
 
-` : "") + "The env-manager vault is not configured or could not be decrypted. Check ~/.config/opencode/env-manager.json."
+` : "") + "The env-manager secret store is not configured or could not be decrypted. Check ~/.config/opencode/env-manager.json."
         });
         return;
       }
       const entry = await context.ui.dialog.select({
-        title: "Vault kubeconfig entry",
+        title: "Secret store kubeconfig entry",
         placeholder: "Search entries",
         options: entries.map((name) => ({
           title: name,
@@ -533,10 +533,10 @@ ${result2.stderr}` : ""}`
       if (!entry) return;
       await rpc.addSource({
         sessionID,
-        kind: "vault",
+        kind: "secret-store",
         entry
       });
-      toast(`Added vault entry ${entry}`, "success");
+      toast(`Added secret store entry ${entry}`, "success");
     }
     async function removeSource(sessionID, state) {
       const choice = await context.ui.dialog.select({
@@ -591,7 +591,7 @@ ${result2.stderr}` : ""}`
     function stateColor(ctx, state) {
       if (!state?.context) return ctx.theme.text.muted;
       const source = state.sources.find((item) => item.id === state.contextSource);
-      if (source?.kind === "vault") return ctx.theme.text.warning;
+      if (source?.kind === "secret-store") return ctx.theme.text.warning;
       if (source?.kind === "dir") return ctx.theme.text.info ?? ctx.theme.text.base;
       return ctx.theme.text.success;
     }

@@ -16,7 +16,7 @@ export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Private directory for generated selector and vault kubeconfig files. */
+/** Private directory for generated selector and secret-store kubeconfig files. */
 export function stateDirectory(): string {
   const base = process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state")
   return path.join(base, "opencode", "k8s")
